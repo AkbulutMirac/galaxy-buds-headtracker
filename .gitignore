@@ -1,0 +1,4 @@
+# Kisisel: kalibrasyon ve MAC adresi iceren baslaticilar
+eksenler.json
+*.bat
+__pycache__/
