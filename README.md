@@ -88,7 +88,7 @@ A pure turn about the vertical therefore cannot change pitch, however the earbud
 
 The protocol knowledge comes from [GalaxyBudsClient](https://github.com/timschneeb/GalaxyBudsClient) and [BudsPro-Headtracking](https://github.com/timschneeb/BudsPro-Headtracking) by [@timschneeb](https://github.com/timschneeb). This is an independent Python implementation.
 
-Unofficial project, not affiliated with Samsung.
+Unofficial project, not affiliated with or endorsed by Samsung. Samsung, Galaxy and Galaxy Buds are trademarks of Samsung Electronics Co., Ltd. They are used here only to describe compatibility.
 
 ## Türkçe
 
