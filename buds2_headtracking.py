@@ -1,11 +1,11 @@
-"""Galaxy Buds2 kafa takibi: kulakligin sensor verisini PC'de okur, opentrack'e gonderir (Windows ve Linux).
+"""Galaxy Buds2 head tracking: reads the earbuds' sensor on the PC and sends it to opentrack (Windows and Linux).
 
-Kullanim:  python buds2_headtracking.py AA:BB:CC:DD:EE:FF [--sadece-sag-sol] [--channel N] [--trace] [--seconds N]
-Calisirken: r = duz bakarken ortala, Ctrl+C = cik
-            Pencere odakta degilken ortalama: Windows'ta Ctrl+Alt+R, Linux'ta `pkill -USR1 -f buds2_headtracking`
-            u = duz bakarken bas, 3 saniye icinde basini yukari kaldir (yukari ekseni olculur, kaydedilir)
+Usage:  python buds2_headtracking.py AA:BB:CC:DD:EE:FF [--sadece-sag-sol] [--channel N] [--trace] [--seconds N]
+While running: r = recenter (look straight ahead), Ctrl+C = quit
+               Recenter without window focus: Ctrl+Alt+R on Windows, `pkill -USR1 -f buds2_headtracking` on Linux
+               u = press while looking straight, then lift your head within 3 s (measures and saves the up axis)
 
-Protokol GalaxyBudsClient'tan (timschneeb) alindi; sadece 360 Audio mesajlari gonderilir.
+Protocol taken from GalaxyBudsClient (timschneeb); only 360 Audio messages are sent.
 """
 import argparse
 import ctypes
@@ -33,7 +33,7 @@ else:
     def read_key():
         return sys.stdin.read(1).lower() if select.select([sys.stdin], [], [], 0)[0] else None
 
-# Buds+ ve sonrasi modellerin yonetim servisi (GalaxyBudsClient: Uuids.SppNew)
+# Management service of Buds+ and later models (GalaxyBudsClient: Uuids.SppNew)
 SPP_UUID = uuid.UUID("2e73a4ad-332d-41fc-90e2-16bef06523f2")
 
 SOM, EOM = 0xFD, 0xDD
@@ -46,17 +46,17 @@ DATA_GRV, DATA_WEAR_ON, DATA_WEAR_OFF, DATA_GYROCAL, DATA_STUCK = 32, 33, 34, 35
 
 KEEPALIVE_SEC = 2.0
 PRINT_SEC = 0.1
-OPENTRACK_ADDR = ("127.0.0.1", 4242)  # opentrack girisi "UDP over network": 6 double (x, y, z, yaw, pitch, roll)
+OPENTRACK_ADDR = ("127.0.0.1", 4242)  # opentrack input "UDP over network": 6 doubles (x, y, z, yaw, pitch, roll)
 
 CAL_SEC = 3.0
-AXES_FILE = Path(__file__).with_name("eksenler.json")  # u olcumu buraya kaydedilir
+AXES_FILE = Path(__file__).with_name("eksenler.json")  # the u measurement is saved here
 
-# Samsung GRV'de dunya X ekseni dikey (yercekimi); kayittan olculdu.
+# In Samsung's GRV the world X axis is vertical (gravity); measured from a recording.
 WORLD_UP = (1.0, 0.0, 0.0)
-# Basi yukari kaldirma ekseni, kulaklik ekseninde (30 sn hareket kaydindan). u ile yeniden olculur.
+# Head-lift (pitch) axis in earbud coordinates (from a 30 s motion recording). Re-measured with u.
 LAT_AXIS = (0.99, 0.00, -0.13)
 
-# Ctrl+Alt+R: pencere odakta olmasa da ortalar
+# Ctrl+Alt+R: recenters even when the window has no focus
 MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, VK_R, WM_HOTKEY = 0x1, 0x2, 0x4000, 0x52, 0x0312
 
 
@@ -78,7 +78,7 @@ def encode(msg_id, payload):
 
 
 def frames(buf):
-    """Tampondaki tam cerceveleri ayiklar: (msg_id, payload, ham cerceve, crc_ok). Yarim kalan bayt buf'ta kalir."""
+    """Extracts complete frames from buf: (msg_id, payload, raw frame, crc_ok). Partial bytes stay in buf."""
     while True:
         start = buf.find(SOM)
         if start < 0:
@@ -121,7 +121,7 @@ def normalize(v):
 
 
 def rotate(v, q):
-    """q v q^-1. Buds2'de dunya vektorunu kulaklik eksenine cevirir; q_conj(q) ile tersi."""
+    """q v q^-1. On the Buds2 this turns a world vector into earbud coordinates; q_conj(q) does the reverse."""
     x, y, z, _ = q_mul(q_mul(q, (*v, 0.0)), q_conj(q))
     return x, y, z
 
@@ -131,7 +131,7 @@ def cross(a, b):
 
 
 def rotation_axis(d):
-    """d donusunun ekseni (aci < 180 olacak yonde); ~15 dereceden az donmusse None."""
+    """Axis of rotation d (oriented so the angle is < 180); None if it rotated less than ~15 degrees."""
     x, y, z, w = d
     if w < 0:
         x, y, z = -x, -y, -z
@@ -139,7 +139,7 @@ def rotation_axis(d):
 
 
 def load_lat():
-    """Yukari kaldirma ekseni: eksenler.json varsa oradan, yoksa varsayilan."""
+    """Head-lift axis: from eksenler.json if it exists, otherwise the default."""
     try:
         return normalize(json.loads(AXES_FILE.read_text())["pitch"])
     except (FileNotFoundError, KeyError, TypeError):
@@ -151,17 +151,18 @@ def save_lat(lat):
 
 
 def head_angles(q, ref, lat):
-    """ref'e gore (yaw, pitch) derece: + yaw = sola, + pitch = yukari.
-    Burun yonu dunyada izlenir: yaw = yatayda donusu, pitch = ufka gore acisi. Kulagin egikligi etkilemez."""
-    nose = normalize(cross(lat, rotate(WORLD_UP, ref)))  # kulaklik ekseninde; ref aninda yatay
-    start, now = rotate(nose, q_conj(ref)), rotate(nose, q_conj(q))  # dunya ekseninde
+    """(yaw, pitch) in degrees relative to ref: + yaw = left, + pitch = up.
+    Tracks the nose direction in the world: yaw = its turn in the horizontal plane, pitch = its angle to the
+    horizon. The earbud's tilt in the ear does not matter."""
+    nose = normalize(cross(lat, rotate(WORLD_UP, ref)))  # earbud coordinates; horizontal at ref
+    start, now = rotate(nose, q_conj(ref)), rotate(nose, q_conj(q))  # world coordinates
     yaw = math.atan2(start[1] * now[2] - start[2] * now[1], start[1] * now[1] + start[2] * now[2])
     pitch = math.asin(max(-1.0, min(1.0, now[0])))
     return math.degrees(yaw), math.degrees(pitch)
 
 
 def bar(yaw):
-    pos = max(-20, min(20, round(-yaw / 3)))  # +yaw = sola donus
+    pos = max(-20, min(20, round(-yaw / 3)))  # +yaw = turn left
     cells = ["-"] * 41
     cells[20] = "|"
     cells[20 + pos] = "#"
@@ -169,16 +170,16 @@ def bar(yaw):
 
 
 def sdp_rfcomm_channel(mac, service_uuid):
-    """Linux: servisin RFCOMM kanalini SDP ServiceSearchAttributeRequest ile bulur."""
-    pattern = b"\x35\x11\x1c" + service_uuid.bytes  # UUID128 iceren dizi
-    attrs = b"\x35\x05\x0a\x00\x00\xff\xff"  # 0x0000-0xFFFF tum ozellikler
-    params = pattern + b"\xff\xff" + attrs + b"\x00"  # en fazla 0xFFFF bayt, devam yok
+    """Linux: finds the service's RFCOMM channel with an SDP ServiceSearchAttributeRequest."""
+    pattern = b"\x35\x11\x1c" + service_uuid.bytes  # sequence holding one UUID128
+    attrs = b"\x35\x05\x0a\x00\x00\xff\xff"  # all attributes 0x0000-0xFFFF
+    params = pattern + b"\xff\xff" + attrs + b"\x00"  # up to 0xFFFF bytes, no continuation
     with socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP) as sdp:
         sdp.settimeout(5)
         sdp.connect((mac, 1))  # SDP = PSM 1
         sdp.send(struct.pack(">BHH", 0x06, 1, len(params)) + params)
         resp = sdp.recv(4096)
-    # ProtocolDescriptorList icinde RFCOMM UUID16 (0x0003) ve ardindan uint8 kanal: 19 00 03 08 <kanal>
+    # In ProtocolDescriptorList: RFCOMM UUID16 (0x0003) followed by a uint8 channel: 19 00 03 08 <channel>
     i = resp.find(b"\x19\x00\x03\x08")
     if resp[:1] != b"\x07" or i < 0:
         raise OSError(f"SDP'de {service_uuid} bulunamadi. Kanali --channel ile verin (sdptool browse {mac}).")
@@ -190,7 +191,7 @@ def connect(mac, channel=None):
     if os.name != "nt" or channel:
         sock.connect((mac, channel or sdp_rfcomm_channel(mac, SPP_UUID)))
         return sock
-    # Python kanal numarasi istiyor; SOCKADDR_BTH'ye UUID verip port=0 birakinca Windows kanali SDP ile kendisi bulur.
+    # Python wants a channel number; with the UUID in SOCKADDR_BTH and port=0, Windows finds the channel via SDP.
     ws2 = ctypes.WinDLL("ws2_32")
     ws2.connect.argtypes = [ctypes.c_size_t, ctypes.c_char_p, ctypes.c_int]
     addr = struct.pack("<HQ16sI", socket.AF_BLUETOOTH, int(mac.replace(":", ""), 16), SPP_UUID.bytes_le, 0)
@@ -202,7 +203,7 @@ def connect(mac, channel=None):
 
 
 def global_recenter():
-    """Pencere odakta degilken ortalama tetikleyicisi: (istendi_mi(), kapat(), nasil tetiklenir veya None)."""
+    """Recenter trigger that works without window focus: (requested(), close(), how to trigger it or None)."""
     if os.name == "nt":
         from ctypes import wintypes
         user32 = ctypes.WinDLL("user32")
@@ -248,7 +249,7 @@ def main():
         print("Uyari: Ctrl+Alt+R baska bir programda kayitli; ortalamak icin bu pencerede r'ye bas.")
     term = None
     if os.name != "nt" and sys.stdin.isatty():
-        term = termios.tcgetattr(sys.stdin)  # tuslari Enter beklemeden okumak icin
+        term = termios.tcgetattr(sys.stdin)  # read keys without waiting for Enter
         tty.setcbreak(sys.stdin)
     mode = " (sadece sag/sol)" if args.sadece_sag_sol else ""
     print(f"Aci opentrack'e gonderiliyor: UDP {OPENTRACK_ADDR[0]}:{OPENTRACK_ADDR[1]}{mode}")
@@ -266,7 +267,7 @@ def main():
 
     buf = bytearray()
     ref = last_q = None
-    cal = None  # u olcumu suruyorsa: {"until", "best"}; best = baslangica gore en buyuk donus
+    cal = None  # while a u measurement runs: {"until", "best"}; best = largest rotation from the start
     started = last_keepalive = time.monotonic()
     last_print = 0.0
     try:
@@ -284,7 +285,7 @@ def main():
                     ref = last_q
                     print("Ortalandi.")
                 elif key == "u":
-                    ref = last_q  # basarken duz bakiliyor: hem ortala hem olcumun baslangici
+                    ref = last_q  # user looks straight when pressing: recenter and start of the measurement
                     cal = {"until": now + CAL_SEC, "best": (0.0, 0.0, 0.0, 1.0)}
                     print(f"{CAL_SEC:.0f} saniye icinde basini YUKARI kaldir...")
             try:
@@ -310,7 +311,7 @@ def main():
                         ref = ref or last_q
                         if cal:
                             d = q_mul(last_q, q_conj(ref))
-                            if abs(d[3]) < abs(cal["best"][3]):  # |w| kucukse donus acisi buyuk
+                            if abs(d[3]) < abs(cal["best"][3]):  # smaller |w| means a larger rotation angle
                                 cal["best"] = d
                             if now >= cal["until"]:
                                 measured = rotation_axis(cal["best"])
@@ -325,13 +326,13 @@ def main():
                         yaw, pitch = head_angles(last_q, ref, lat)
                         if args.sadece_sag_sol:
                             pitch = 0.0
-                        udp.sendto(struct.pack("<6d", 0, 0, 0, -yaw, pitch, 0), OPENTRACK_ADDR)  # opentrack'te + yaw = saga
+                        udp.sendto(struct.pack("<6d", 0, 0, 0, -yaw, pitch, 0), OPENTRACK_ADDR)  # opentrack: + yaw = right
                         if now - last_print >= PRINT_SEC:
                             extra = f"  ham={[round(v, 4) for v in raw]} norm={norm:.3f}" if args.trace else ""
                             print(f"{bar(yaw)}  yaw={yaw:+6.1f}  pitch={pitch:+6.1f}{extra}")
                             last_print = now
                     elif kind == DATA_WEAR_ON:
-                        ref = None  # masadaki yon degil, kulaktaki yon referans olsun
+                        ref = None  # reference = orientation in the ear, not on the desk
                         print("Kulaklik takildi, ortalandi.")
                     elif kind == DATA_WEAR_OFF:
                         print("Kulaklik cikarildi.")
