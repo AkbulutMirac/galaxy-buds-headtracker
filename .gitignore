@@ -1,4 +1,4 @@
-# Kisisel: kalibrasyon ve MAC adresi iceren baslaticilar
-eksenler.json
+# Personal: calibration and launchers containing the MAC address
+axes.json
 *.bat
 __pycache__/

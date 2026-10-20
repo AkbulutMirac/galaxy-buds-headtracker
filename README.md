@@ -3,7 +3,7 @@
 Turn your **Samsung Galaxy Buds** into a PC head tracker. The earbuds already contain the motion sensor Samsung uses for *360 Audio*. This script reads that sensor over Bluetooth and streams your head's **left/right (yaw)** and **up/down (pitch)** to [opentrack](https://github.com/opentrack/opentrack), so any game that supports TrackIR / freetrack can follow your head. No camera, no extra hardware.
 
 ```
-SOL [--------------#-----|--------------------] SAG  yaw= +18.1  pitch=  -4.2
+LEFT [--------------#-----|--------------------] RIGHT  yaw= +18.1  pitch=  -4.2
 ```
 
 - Pure Python, no dependencies (standard library only)
@@ -36,9 +36,9 @@ SOL [--------------#-----|--------------------] SAG  yaw= +18.1  pitch=  -4.2
 | `r` | recenter (look straight ahead first) |
 | **Ctrl+Alt+R** (Windows) | recenter from anywhere, even while a game has focus |
 | `pkill -USR1 -f buds2_headtracking` (Linux) | recenter from anywhere. Bind it to a desktop shortcut. |
-| `u` | measure the "look up" axis: press while looking straight, then lift your head within 3 s. Saved to `eksenler.json`. |
+| `u` | measure the "look up" axis: press while looking straight, then lift your head within 3 s. Saved to `axes.json`. |
 | `Ctrl+C` | quit |
-| `--sadece-sag-sol` | left/right only, pitch is always 0 |
+| `--yaw-only` | left/right only, pitch is always 0 |
 | `--channel N` | RFCOMM channel, if automatic discovery fails |
 | `--trace` | print every Bluetooth frame in hex |
 
@@ -99,7 +99,7 @@ Samsung Galaxy Buds kulaklığını PC'de kafa takip cihazı olarak kullanmanı 
 3. opentrack'te Input olarak **UDP over network**, Output olarak **freetrack 2.0 Enhanced** seç, sonra **Start**'a bas.
 4. Düz bak ve ortala: penceredeyken `r`, oyundayken Windows'ta **Ctrl+Alt+R**.
 
-Sadece sağ/sol istiyorsan `--sadece-sag-sol` ekle. Galaxy Buds2 ile Windows 11'de test edildi. Linux desteği yazıldı ama henüz gerçek donanımda denenmedi.
+Sadece sağ/sol istiyorsan `--yaw-only` ekle. Galaxy Buds2 ile Windows 11'de test edildi. Linux desteği yazıldı ama henüz gerçek donanımda denenmedi.
 
 ## License
 

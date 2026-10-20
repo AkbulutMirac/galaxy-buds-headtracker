@@ -1,6 +1,6 @@
 """Galaxy Buds2 head tracking: reads the earbuds' sensor on the PC and sends it to opentrack (Windows and Linux).
 
-Usage:  python buds2_headtracking.py AA:BB:CC:DD:EE:FF [--sadece-sag-sol] [--channel N] [--trace] [--seconds N]
+Usage:  python buds2_headtracking.py AA:BB:CC:DD:EE:FF [--yaw-only] [--channel N] [--trace] [--seconds N]
 While running: r = recenter (look straight ahead), Ctrl+C = quit
                Recenter without window focus: Ctrl+Alt+R on Windows, `pkill -USR1 -f buds2_headtracking` on Linux
                u = press while looking straight, then lift your head within 3 s (measures and saves the up axis)
@@ -49,7 +49,7 @@ PRINT_SEC = 0.1
 OPENTRACK_ADDR = ("127.0.0.1", 4242)  # opentrack input "UDP over network": 6 doubles (x, y, z, yaw, pitch, roll)
 
 CAL_SEC = 3.0
-AXES_FILE = Path(__file__).with_name("eksenler.json")  # the u measurement is saved here
+AXES_FILE = Path(__file__).with_name("axes.json")  # the u measurement is saved here
 
 # In Samsung's GRV the world X axis is vertical (gravity); measured from a recording.
 WORLD_UP = (1.0, 0.0, 0.0)
@@ -139,7 +139,7 @@ def rotation_axis(d):
 
 
 def load_lat():
-    """Head-lift axis: from eksenler.json if it exists, otherwise the default."""
+    """Head-lift axis: from axes.json if it exists, otherwise the default."""
     try:
         return normalize(json.loads(AXES_FILE.read_text())["pitch"])
     except (FileNotFoundError, KeyError, TypeError):
@@ -166,7 +166,7 @@ def bar(yaw):
     cells = ["-"] * 41
     cells[20] = "|"
     cells[20 + pos] = "#"
-    return "SOL [" + "".join(cells) + "] SAG"
+    return "LEFT [" + "".join(cells) + "] RIGHT"
 
 
 def sdp_rfcomm_channel(mac, service_uuid):
@@ -182,7 +182,7 @@ def sdp_rfcomm_channel(mac, service_uuid):
     # In ProtocolDescriptorList: RFCOMM UUID16 (0x0003) followed by a uint8 channel: 19 00 03 08 <channel>
     i = resp.find(b"\x19\x00\x03\x08")
     if resp[:1] != b"\x07" or i < 0:
-        raise OSError(f"SDP'de {service_uuid} bulunamadi. Kanali --channel ile verin (sdptool browse {mac}).")
+        raise OSError(f"SDP: {service_uuid} not found. Pass the channel with --channel (sdptool browse {mac}).")
     return resp[i + 4]
 
 
@@ -198,7 +198,7 @@ def connect(mac, channel=None):
     if ws2.connect(sock.fileno(), addr, len(addr)) != 0:
         err = ws2.WSAGetLastError()
         sock.close()
-        raise OSError(err, f"Baglanti kurulamadi (WSA hata {err}). Kulaklik PC'ye bagli mi?")
+        raise OSError(err, f"Could not connect (WSA error {err}). Are the earbuds connected to this PC?")
     return sock
 
 
@@ -231,28 +231,28 @@ def global_recenter():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Galaxy Buds2 kafa takibi")
-    parser.add_argument("mac", help="kulakligin MAC adresi, or. AA:BB:CC:DD:EE:FF")
-    parser.add_argument("--sadece-sag-sol", action="store_true", help="asagi/yukariyi gonderme (pitch hep 0)")
-    parser.add_argument("--channel", type=int, help="RFCOMM kanali; normalde otomatik bulunur")
-    parser.add_argument("--trace", action="store_true", help="gelen/giden tum cerceveleri hex yaz")
-    parser.add_argument("--seconds", type=float, default=0, help="N saniye sonra cik (0 = sonsuz)")
+    parser = argparse.ArgumentParser(description="Galaxy Buds head tracking for opentrack")
+    parser.add_argument("mac", help="Bluetooth MAC address of the earbuds, e.g. AA:BB:CC:DD:EE:FF")
+    parser.add_argument("--yaw-only", action="store_true", help="send left/right only (pitch is always 0)")
+    parser.add_argument("--channel", type=int, help="RFCOMM channel; normally found automatically")
+    parser.add_argument("--trace", action="store_true", help="print every sent/received frame in hex")
+    parser.add_argument("--seconds", type=float, default=0, help="quit after N seconds (0 = run forever)")
     args = parser.parse_args()
 
     sock = connect(args.mac, args.channel)
     lat = load_lat()
     recenter_requested, close_recenter, recenter_how = global_recenter()
-    print("Baglandi. r = ortala, u = yukari eksenini olc, Ctrl+C = cik")
+    print("Connected. r = recenter, u = measure the up axis, Ctrl+C = quit")
     if recenter_how:
-        print(f"Oyundayken ortalamak icin: {recenter_how}")
+        print(f"To recenter while in a game: {recenter_how}")
     else:
-        print("Uyari: Ctrl+Alt+R baska bir programda kayitli; ortalamak icin bu pencerede r'ye bas.")
+        print("Warning: Ctrl+Alt+R is taken by another program; press r in this window to recenter.")
     term = None
     if os.name != "nt" and sys.stdin.isatty():
         term = termios.tcgetattr(sys.stdin)  # read keys without waiting for Enter
         tty.setcbreak(sys.stdin)
-    mode = " (sadece sag/sol)" if args.sadece_sag_sol else ""
-    print(f"Aci opentrack'e gonderiliyor: UDP {OPENTRACK_ADDR[0]}:{OPENTRACK_ADDR[1]}{mode}")
+    mode = " (yaw only)" if args.yaw_only else ""
+    print(f"Sending angles to opentrack: UDP {OPENTRACK_ADDR[0]}:{OPENTRACK_ADDR[1]}{mode}")
     udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     def send(msg_id, payload):
@@ -278,30 +278,30 @@ def main():
                 last_keepalive = now
             if recenter_requested() and ref:
                 ref = last_q
-                print("Ortalandi.")
+                print("Recentered.")
             key = read_key()
             if key and ref:
                 if key == "r":
                     ref = last_q
-                    print("Ortalandi.")
+                    print("Recentered.")
                 elif key == "u":
                     ref = last_q  # user looks straight when pressing: recenter and start of the measurement
                     cal = {"until": now + CAL_SEC, "best": (0.0, 0.0, 0.0, 1.0)}
-                    print(f"{CAL_SEC:.0f} saniye icinde basini YUKARI kaldir...")
+                    print(f"Lift your head UP within {CAL_SEC:.0f} seconds...")
             try:
                 chunk = sock.recv(1024)
             except TimeoutError:
                 continue
             if not chunk:
-                print("Kulaklik baglantiyi kapatti.")
+                print("The earbuds closed the connection.")
                 break
             buf += chunk
             for msg_id, payload, frame, crc_ok in frames(buf):
                 if args.trace:
-                    print(f"<< {msg_id:3d}  {frame.hex(' ')}{'' if crc_ok else '  (CRC HATALI)'}")
+                    print(f"<< {msg_id:3d}  {frame.hex(' ')}{'' if crc_ok else '  (BAD CRC)'}")
                 if msg_id == SPATIAL_AUDIO_CONTROL and payload:
-                    print({CTRL_ATTACH_OK: "Sensor acildi.", CTRL_DETACH_OK: "Sensor kapandi."}
-                          .get(payload[0], f"Kontrol yaniti: {payload[0]}"))
+                    print({CTRL_ATTACH_OK: "Sensor attached.", CTRL_DETACH_OK: "Sensor detached."}
+                          .get(payload[0], f"Control reply: {payload[0]}"))
                 elif msg_id == SPATIAL_AUDIO_DATA and payload:
                     kind, data = payload[0], payload[1:]
                     if kind == DATA_GRV and len(data) >= 8:
@@ -316,30 +316,30 @@ def main():
                             if now >= cal["until"]:
                                 measured = rotation_axis(cal["best"])
                                 if measured is None:
-                                    print("Yukari olcumu olmadi: en az 15 derece kaldirmalisin. Tekrar u'ya bas.")
+                                    print("Up measurement failed: lift your head at least 15 degrees, then press u again.")
                                 else:
                                     lat = measured
                                     save_lat(lat)
-                                    print(f"Yukari ekseni olculdu ve {AXES_FILE.name} dosyasina kaydedildi: "
+                                    print(f"Up axis measured and saved to {AXES_FILE.name}: "
                                           f"({lat[0]:+.2f}, {lat[1]:+.2f}, {lat[2]:+.2f})")
                                 cal = None
                         yaw, pitch = head_angles(last_q, ref, lat)
-                        if args.sadece_sag_sol:
+                        if args.yaw_only:
                             pitch = 0.0
                         udp.sendto(struct.pack("<6d", 0, 0, 0, -yaw, pitch, 0), OPENTRACK_ADDR)  # opentrack: + yaw = right
                         if now - last_print >= PRINT_SEC:
-                            extra = f"  ham={[round(v, 4) for v in raw]} norm={norm:.3f}" if args.trace else ""
+                            extra = f"  raw={[round(v, 4) for v in raw]} norm={norm:.3f}" if args.trace else ""
                             print(f"{bar(yaw)}  yaw={yaw:+6.1f}  pitch={pitch:+6.1f}{extra}")
                             last_print = now
                     elif kind == DATA_WEAR_ON:
                         ref = None  # reference = orientation in the ear, not on the desk
-                        print("Kulaklik takildi, ortalandi.")
+                        print("Earbuds in ears, recentered.")
                     elif kind == DATA_WEAR_OFF:
-                        print("Kulaklik cikarildi.")
+                        print("Earbuds taken out.")
                     elif kind == DATA_STUCK:
-                        print("Uyari: sensor takildi (sensor stuck).")
+                        print("Warning: sensor stuck.")
                     elif args.trace:
-                        print(f"   veri tipi {kind}: {data.hex(' ')}")
+                        print(f"   data type {kind}: {data.hex(' ')}")
     except KeyboardInterrupt:
         pass
     finally:
@@ -353,7 +353,7 @@ def main():
         close_recenter()
         if term:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, term)
-        print("Cikildi.")
+        print("Stopped.")
 
 
 if __name__ == "__main__":
